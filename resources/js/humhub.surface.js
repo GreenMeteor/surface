@@ -1,8 +1,3 @@
-/**
- * Surface Module - Main JavaScript
- * File: resources/js/humhub.surface.js
- */
-
 humhub.module('surface', function(module, require, $) {
     
     var client = require('client');
@@ -497,4 +492,5 @@ humhub.module('surface', function(module, require, $) {
         showSurfaceTooltip: showSurfaceTooltip,
         hideSurfaceTooltip: hideSurfaceTooltip
     });
+
 });
