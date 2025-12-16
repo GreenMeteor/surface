@@ -1,0 +1,12 @@
+{
+    "id": "surface",
+    "name": "Surface Core",
+    "description": "Enable/disable containers for user(s).",
+    "keywords": [
+        "core"
+    ],
+    "version": "1.0.0",
+    "humhub": {
+        "minVersion": "1.18.0"
+    }
+}
