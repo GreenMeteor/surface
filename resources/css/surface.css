@@ -1,3 +1,8 @@
+/**
+ * Surface Module - Styles
+ * File: resources/css/surface.css
+ */
+
 /* Hide disabled containers */
 .surface-disabled {
     display: none !important;
@@ -339,5 +344,4 @@ body.user-is-admin [data-surface-container]:hover {
     font-size: 14px;
     color: var(--bs-secondary);
     margin-top: 5px;
-
 }

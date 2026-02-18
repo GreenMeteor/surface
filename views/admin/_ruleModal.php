@@ -4,7 +4,7 @@ use humhub\widgets\modal\Modal;
 use humhub\widgets\modal\ModalButton;
 use humhub\widgets\form\ActiveForm;
 use humhub\modules\ui\icon\widgets\Icon;
-use yii\helpers\Html;
+use humhub\helpers\Html;
 
 $this->registerJs(
     'humhub.modules.surface.initFormHandler();',
@@ -24,7 +24,7 @@ $this->registerJs(
     ],
 ]) ?>
 
-    <div class="surface-container-info">
+    <div class="surface-container-info" style="background:#f5f5f5;border-radius:4px;padding:8px 12px;margin-bottom:16px;display:inline-block;">
         <?= Icon::get('cube') ?>
         <strong><?= Yii::t('SurfaceModule.base', 'Container:') ?></strong>
         <?= Html::encode($model->container_name ?: $model->container_selector) ?>
@@ -33,22 +33,30 @@ $this->registerJs(
     <?= $form->field($model, 'container_selector')->hiddenInput()->label(false) ?>
 
     <?= $form->field($model, 'container_name')->textInput([
-        'readonly' => true,
+        'readonly'    => true,
         'placeholder' => Yii::t('SurfaceModule.base', 'Container identifier'),
     ]) ?>
 
-    <?= $form->field($model, 'disabled_for_all')->checkbox([
-        'label' => Yii::t('SurfaceModule.base', 'Disable this container for all users'),
-    ]) ?>
+    <div class="form-group">
+        <div class="checkbox" style="margin:0;">
+            <label>
+                <?= Html::activeCheckbox($model, 'disabled_for_all', ['label' => false]) ?>
+                <?= Yii::t('SurfaceModule.base', 'Disable this container for all users') ?>
+            </label>
+        </div>
+        <?php if ($model->hasErrors('disabled_for_all')): ?>
+            <div class="help-block"><?= Html::error($model, 'disabled_for_all') ?></div>
+        <?php endif; ?>
+    </div>
 
-    <div id="user-select-container" class="d-none">
+    <div id="user-select-container">
         <?= $form->field($model, 'user_id')->dropDownList($userList, [
             'prompt' => Yii::t('SurfaceModule.base', 'Select a user...'),
-            'class' => 'form-control',
+            'class'  => 'form-control',
         ])->hint(Yii::t('SurfaceModule.base', 'Select a specific user to disable this container for')) ?>
     </div>
 
-    <div class="alert alert-info">
+    <div class="alert alert-info" style="margin-top:12px;">
         <?= Icon::get('info-circle') ?>
         <?= Yii::t('SurfaceModule.base', 'This rule will hide the selected container from view. The container will be completely invisible to affected users.') ?>
     </div>

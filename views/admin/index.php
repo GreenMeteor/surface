@@ -2,7 +2,7 @@
 
 use humhub\widgets\bootstrap\Button;
 use humhub\modules\ui\icon\widgets\Icon;
-use yii\helpers\Html;
+use humhub\helpers\Html;
 use yii\helpers\Url;
 
 $this->pageTitle = Yii::t('SurfaceModule.base', 'Surface Rules Management');
@@ -19,11 +19,41 @@ $this->pageTitle = Yii::t('SurfaceModule.base', 'Surface Rules Management');
                 <?= Yii::t('SurfaceModule.base', 'Configure which UI containers are visible to specific users or all users. Hover over containers on any page to see the flag icon and create rules.') ?>
             </div>
 
+            <div class="mb-3">
+                <?php if ($adminModeEnabled): ?>
+                    <?= Button::warning()
+                        ->icon('eye-slash')
+                        ->tooltip(Yii::t('SurfaceModule.base', 'Disable Admin Mode'))
+                        ->link(Url::to(['/surface/admin/toggle-admin-mode']))
+                        ->pjax(false)
+                        ->loader(false) ?>
+                    <span class="text-muted ms-2">
+                        <?= Icon::get('check-circle') ?>
+                        <?= Yii::t('SurfaceModule.base', 'Double-click feature is active') ?>
+                    </span>
+                <?php else: ?>
+                    <?= Button::success()
+                        ->icon('eye')
+                        ->tooltip(Yii::t('SurfaceModule.base', 'Enable Admin Mode'))
+                        ->link(Url::to(['/surface/admin/toggle-admin-mode']))
+                        ->pjax(false)
+                        ->loader(false) ?>
+                    <span class="text-muted ms-2">
+                        <?= Icon::get('times-circle') ?>
+                        <?= Yii::t('SurfaceModule.base', 'Double-click feature is disabled') ?>
+                    </span>
+                <?php endif; ?>
+            </div>
+
             <?php if (empty($rules)): ?>
                 <div class="surface-empty-state">
                     <?= Icon::get('flag') ?>
                     <p><?= Yii::t('SurfaceModule.base', 'No rules configured yet.') ?></p>
-                    <p><?= Yii::t('SurfaceModule.base', 'Navigate to any page and hover over containers marked with data-surface-container to create rules.') ?></p>
+                    <?php if ($adminModeEnabled): ?>
+                        <p><?= Yii::t('SurfaceModule.base', 'Navigate to any page and double-click on elements to create rules.') ?></p>
+                    <?php else: ?>
+                        <p><?= Yii::t('SurfaceModule.base', 'Enable admin mode above to start creating rules.') ?></p>
+                    <?php endif; ?>
                 </div>
             <?php else: ?>
                 <div class="surface-stats">

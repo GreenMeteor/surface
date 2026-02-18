@@ -1,349 +1,393 @@
 humhub.module('surface', function(module, require, $) {
-    
+
     var client = require('client');
     var modal = require('ui.modal');
-    
+
     var disabledContainers = [];
     var isAdmin = false;
-    
+
     /**
      * Initialize the Surface module
      */
     var init = function() {
         console.log('Surface module initialized');
-        
+
         if (isAdmin) {
             initAdminMode();
-            
-            // Hide the admin indicator after 5 seconds
+
             setTimeout(function() {
                 $('body').addClass('surface-indicator-hidden');
             }, 5000);
         }
-        
+
         applyDisabledRules();
     };
-    
+
     /**
-     * Set disabled containers from server
+     * Set disabled containers from server.
+     * Accepts an array of selector strings — these can be:
+     *   - data-surface-container values  e.g. "class-foo-bar"
+     *   - raw CSS class selectors        e.g. ".my-class"
+     *   - raw CSS id selectors           e.g. "#my-id"
+     *   - any valid jQuery selector      e.g. "div.btn-group.dark-mode"
      */
     var setDisabledContainers = function(selectors) {
         disabledContainers = selectors || [];
     };
-    
+
     /**
      * Set admin status
      */
     var setAdminStatus = function(status) {
         isAdmin = status === true || status === 'true';
     };
-    
+
     /**
-     * Initialize admin mode - add flag buttons to ANY element on hover or double-click
+     * Initialize admin mode.
+     *
+     * Key behaviour: when the user double-clicks a small/inline element (icon,
+     * link, span) we walk UP the DOM to the nearest meaningful container div
+     * instead of refusing to act. Double-clicking the <i class="fa-moon-o">
+     * inside <div class="btn-group dark-mode"> correctly targets the div.
      */
     var initAdminMode = function() {
-        var currentHighlightedElement = null;
-        
-        // Method 1: Hover detection (with visual highlight)
+
         $(document).on('mouseenter', '*', function(e) {
             if (!isAdmin) return;
-            
             var $target = $(e.target);
-            
-            // Skip if hovering over modal or flag button
-            if ($target.closest('.modal').length || $target.hasClass('surface-flag-btn')) {
-                return;
-            }
-            
-            // Skip excluded elements
-            if (shouldSkipElement($target)) {
-                return;
-            }
-            
-            // Remove previous highlight
+            if ($target.closest('.modal').length || $target.hasClass('surface-flag-btn')) return;
+            if (isHardExcluded($target)) return;
+
             $('.surface-hover-highlight').removeClass('surface-hover-highlight');
-            
-            // Add highlight to current element
-            $target.addClass('surface-hover-highlight');
-            currentHighlightedElement = $target;
+            getBestTarget($target).addClass('surface-hover-highlight');
         });
-        
+
         $(document).on('mouseleave', '*', function(e) {
-            var $target = $(e.target);
-            $target.removeClass('surface-hover-highlight');
+            $(e.target).removeClass('surface-hover-highlight');
         });
-        
-        // Method 2: Double-click to open modal directly
+
         $(document).on('dblclick', '*', function(e) {
             if (!isAdmin) return;
-            
-            var $target = $(e.target);
-            
-            // Skip if clicking on modal or flag button
-            if ($target.closest('.modal').length || $target.hasClass('surface-flag-btn')) {
-                return;
-            }
-            
-            // Skip excluded elements
-            if (shouldSkipElement($target)) {
-                return;
-            }
-            
-            // Prevent default double-click behavior (text selection, etc.)
+
+            var $clicked = $(e.target);
+
+            if ($clicked.closest('.modal').length || $clicked.hasClass('surface-flag-btn')) return;
+            if (isHardExcluded($clicked)) return;
+
             e.preventDefault();
             e.stopPropagation();
-            
-            // Generate selector and name
+
+            var $target  = getBestTarget($clicked);
             var selector = generateUniqueSelector($target);
-            var name = getElementName($target);
-            
-            // Add data attributes to element for future reference
+            var name     = getElementName($target);
+
             $target.attr('data-surface-container', selector);
             $target.attr('data-surface-name', name);
-            
-            // Open modal directly
+
+            console.log('Surface: targeting element', $target[0], '→ selector:', selector);
+
             openRuleModal(selector, name);
         });
-        
-        // Method 3: Right-click context menu (optional - for future enhancement)
-        // This will show "Surface: Configure Element" in context menu
-        
-        // Show tooltip on hover to indicate double-click is available
+
         var tooltipTimeout;
         $(document).on('mouseenter', '*', function(e) {
             if (!isAdmin) return;
-            
             var $target = $(e.target);
-            
-            if (shouldSkipElement($target) || $target.closest('.modal').length) {
-                return;
-            }
-            
+            if (isHardExcluded($target) || $target.closest('.modal').length) return;
+
             clearTimeout(tooltipTimeout);
             tooltipTimeout = setTimeout(function() {
-                if ($target.is(':hover')) {
-                    showSurfaceTooltip($target);
+                var $best = getBestTarget($target);
+                if ($best.is(':hover') || $target.is(':hover')) {
+                    showSurfaceTooltip($best);
                 }
-            }, 500); // Show tooltip after 500ms hover
+            }, 500);
         });
-        
+
         $(document).on('mouseleave', '*', function() {
             clearTimeout(tooltipTimeout);
             hideSurfaceTooltip();
         });
     };
-    
+
     /**
-     * Show tooltip indicating double-click is available
+     * Hard exclusions — elements that should NEVER be targeted regardless of size.
+     * Replaces the old shouldSkipElement size check which incorrectly blocked
+     * small but valid containers like icon buttons.
      */
+    var isHardExcluded = function($el) {
+        if ($el.is('body, html, script, style, meta, link')) return true;
+        if ($el.hasClass('surface-flag-btn') || $el.hasClass('surface-tooltip')) return true;
+        if ($el.closest('.surface-tooltip, .surface-flag-btn').length) return true;
+        return false;
+    };
+
+    /**
+     * Given any clicked element, walk up the DOM to find the nearest ancestor
+     * (or self) that is a meaningful block-level container.
+     *
+     * Priority:
+     *  1. Element itself is already a container tag (div, section, nav…) → use it
+     *  2. Element is inline/icon (a, i, span, button, svg…) → climb to nearest container
+     *  3. Nothing found above → fall back to original element
+     */
+    var CONTAINER_TAGS = 'div, section, nav, header, footer, aside, article, li, ul, ol';
+    var INLINE_TAGS    = ['a', 'i', 'span', 'button', 'svg', 'img', 'small', 'strong',
+                          'em', 'b', 'label', 'input', 'textarea', 'select', 'icon'];
+
+    var getBestTarget = function($el) {
+        var tag = ($el.prop('tagName') || '').toLowerCase();
+
+        if ($el.is(CONTAINER_TAGS)) {
+            return $el;
+        }
+
+        if (INLINE_TAGS.indexOf(tag) !== -1) {
+            var $ancestor = $el.closest(CONTAINER_TAGS);
+            if ($ancestor.length && !$ancestor.is('body')) {
+                return $ancestor;
+            }
+        }
+
+        return $el;
+    };
+
     var showSurfaceTooltip = function($element) {
-        // Remove any existing tooltip
         $('.surface-tooltip').remove();
-        
+
         var $tooltip = $('<div>')
             .addClass('surface-tooltip')
             .html('<i class="fa fa-flag"></i> Double-click to configure with Surface')
             .appendTo('body');
-        
-        // Position tooltip near element
+
         var offset = $element.offset();
-        var elementHeight = $element.outerHeight();
-        
         $tooltip.css({
-            top: offset.top + elementHeight + 5,
+            top:  offset.top + $element.outerHeight() + 5,
             left: offset.left,
         });
     };
-    
-    /**
-     * Hide tooltip
-     */
+
     var hideSurfaceTooltip = function() {
         $('.surface-tooltip').remove();
     };
-    
+
     /**
-     * Check if element should be skipped for flagging
-     */
-    var shouldSkipElement = function($element) {
-        // Skip if it's the body, html, or document
-        if ($element.is('body') || $element.is('html') || $element.is(document)) {
-            return true;
-        }
-        
-        // Skip if it's a script, style, or meta tag
-        if ($element.is('script') || $element.is('style') || $element.is('meta') || $element.is('link')) {
-            return true;
-        }
-        
-        // Skip if inside a modal
-        if ($element.closest('.modal').length > 0) {
-            return true;
-        }
-        
-        // Skip if it's too small (likely just text or icon) - but only for hover, not double-click
-        var width = $element.outerWidth();
-        var height = $element.outerHeight();
-        if (width < 30 || height < 20) {
-            return true;
-        }
-        
-        // Skip if it's the flag button or tooltip
-        if ($element.hasClass('surface-flag-btn') || $element.hasClass('surface-tooltip')) {
-            return true;
-        }
-        
-        // Skip Surface's own elements
-        if ($element.closest('.surface-tooltip').length || $element.closest('.surface-flag-btn').length) {
-            return true;
-        }
-        
-        return false;
-    };
-    
-    /**
-     * Remove flag button (no longer needed with double-click)
-     */
-    var addFlagToElement = function($element) {
-        // This function is deprecated but kept for backward compatibility
-        // Double-click now directly opens the modal
-        console.log('Surface: Element flagged (use double-click to configure)', $element);
-    };
-    
-    /**
-     * Generate a unique selector for an element
+     * Generate a stable, UNIQUE selector for a container element.
+     *
+     * The core problem with class-only selectors (e.g. "li.nav-item") is that
+     * many sibling elements share the same classes, so disabling one disables all.
+     *
+     * Strategy:
+     *  1. Existing data-surface-container  (already resolved in this session)
+     *  2. ID on the element itself → "id-{value}"  (always unique)
+     *  3. Scoped path selector — walk up to the nearest uniquely-identifiable
+     *     ancestor (has ID or is body) and build a child path with :nth-child
+     *     to pinpoint this exact element.
+     *     e.g. "#top-menu>ul.navbar-nav>li.nav-item:nth-child(3)"
+     *
+     * The scoped path is stored as-is. resolveSelector() passes it through
+     * unchanged because it contains '>' or ':' characters.
      */
     var generateUniqueSelector = function($element) {
-        // If element already has data-surface-container, use it
-        var existingSelector = $element.attr('data-surface-container');
-        if (existingSelector) {
-            return existingSelector;
-        }
-        
-        // Try to use ID
+        var existing = $element.attr('data-surface-container');
+        if (existing) return existing;
+
         var id = $element.attr('id');
-        if (id) {
-            return 'id-' + id;
+        if (id) return 'id-' + id;
+
+        return buildScopedPath($element);
+    };
+
+    /**
+     * Build a scoped CSS path from $element up to the nearest ancestor that
+     * has an ID (giving us a stable root anchor) or until we hit <body>.
+     *
+     * Each step uses:  tagName.firstClass.secondClass:nth-child(n)
+     * The nth-child index disambiguates siblings that share the same classes.
+     *
+     * Examples:
+     *   li.nav-item (3rd child of ul.navbar-nav inside #top-menu)
+     *   → "#top-menu > ul.navbar-nav > li.nav-item:nth-child(3)"
+     *
+     *   div.btn-group.dark-mode (unique enough on its own inside a named parent)
+     *   → "#page-wrapper > div.btn-group.dark-mode"
+     */
+    var buildScopedPath = function($element) {
+        var parts  = [];
+        var $node  = $element;
+        var MAX_DEPTH = 6;
+
+        for (var depth = 0; depth < MAX_DEPTH; depth++) {
+            var nodePart = getNodeSegment($node);
+            parts.unshift(nodePart);
+
+            var $parent = $node.parent();
+
+            if ($parent.length === 0 || $parent.is('body') || $parent.is('html')) {
+                break;
+            }
+
+            var parentId = $parent.attr('id');
+            if (parentId) {
+                parts.unshift('#' + parentId);
+                break;
+            }
+
+            $node = $parent;
         }
-        
-        // Try to use class combination
-        var classes = $element.attr('class');
-        if (classes) {
-            var classArray = classes.split(' ').filter(function(c) {
-                return c && !c.startsWith('surface-');
-            }).slice(0, 3);
-            if (classArray.length > 0) {
-                return 'class-' + classArray.join('-');
+
+        return parts.join(' > ');
+    };
+
+    /**
+     * Build the CSS segment for a single element node:
+     *   tagName[.class1.class2][:nth-child(n)]
+     *
+     * nth-child is only appended when there are siblings that share the same
+     * tag+class combination — i.e. when the element would not be unique without it.
+     */
+    var getNodeSegment = function($el) {
+        var tag = $el.prop('tagName').toLowerCase();
+
+        var classes = ($el.attr('class') || '').split(/\s+/).filter(function(c) {
+            return c && !c.startsWith('surface-');
+        });
+
+        var segment = tag + (classes.length ? '.' + classes.slice(0, 3).join('.') : '');
+
+        var $parent = $el.parent();
+        if ($parent.length) {
+            var $siblings = $parent.children(segment);
+            if ($siblings.length > 1) {
+                var nthIndex = $el.index() + 1;
+                segment += ':nth-child(' + nthIndex + ')';
             }
         }
-        
-        // Use tag name + index among siblings
-        var tagName = $element.prop('tagName').toLowerCase();
-        var index = $element.index();
-        var parentClasses = $element.parent().attr('class') || 'body';
-        
-        return tagName + '-' + index + '-in-' + parentClasses.split(' ')[0];
+
+        return segment;
     };
-    
+
     /**
      * Get a human-readable name for an element
      */
     var getElementName = function($element) {
-        // Check for data-surface-name
-        var existingName = $element.attr('data-surface-name');
-        if (existingName) {
-            return existingName;
-        }
-        
-        // Try to get text content (limited)
+        var existing = $element.attr('data-surface-name');
+        if (existing) return existing;
+
         var text = $element.clone().children().remove().end().text().trim();
-        if (text && text.length > 0 && text.length < 50) {
-            return text.substring(0, 30) + (text.length > 30 ? '...' : '');
-        }
-        
-        // Try to get heading text
-        var heading = $element.find('h1, h2, h3, h4, h5, h6').first().text().trim();
-        if (heading && heading.length > 0) {
-            return heading.substring(0, 30) + (heading.length > 30 ? '...' : '');
-        }
-        
-        // Try to get title or alt attribute
+        if (text && text.length < 50) return text.substring(0, 30) + (text.length > 30 ? '...' : '');
+
+        var heading = $element.find('h1,h2,h3,h4,h5,h6').first().text().trim();
+        if (heading) return heading.substring(0, 30) + (heading.length > 30 ? '...' : '');
+
         var title = $element.attr('title') || $element.attr('alt');
-        if (title) {
-            return title.substring(0, 30);
-        }
-        
-        // Use ID
+        if (title) return title.substring(0, 30);
+
         var id = $element.attr('id');
-        if (id) {
-            return 'Element: #' + id;
-        }
-        
-        // Use class names
+        if (id) return 'Element: #' + id;
+
         var classes = $element.attr('class');
-        if (classes) {
-            var mainClass = classes.split(' ')[0];
-            return 'Element: .' + mainClass;
-        }
-        
-        // Fallback to tag name
-        var tagName = $element.prop('tagName');
-        return tagName + ' Element';
+        if (classes) return 'Element: .' + classes.split(/\s+/)[0];
+
+        return $element.prop('tagName') + ' Element';
     };
-    
+
     /**
-     * Open the rule configuration modal
+     * Resolve a stored selector string to a usable jQuery selector.
+     *
+     * "id-{value}"                         → "#value"
+     * scoped path (contains > or :nth)     → pass through as-is
+     * contains '.' or '#'                  → pass through as-is
+     * anything else                        → [data-surface-container="value"] (legacy)
      */
+    var resolveSelector = function(storedSelector) {
+        if (storedSelector.startsWith('id-')) {
+            return '#' + storedSelector.substring(3);
+        }
+
+        // all contain one of these characters — pass straight through to jQuery.
+        if (storedSelector.indexOf('.') !== -1 ||
+            storedSelector.indexOf('#') !== -1 ||
+            storedSelector.indexOf('>') !== -1 ||
+            storedSelector.indexOf(':') !== -1) {
+            return storedSelector;
+        }
+
+        return '[data-surface-container="' + storedSelector + '"]';
+    };
+
+    /**
+     * Apply disabled rules — adds .surface-disabled to every matched element.
+     *
+     * Also installs a MutationObserver so rules apply to elements that are
+     * injected into the DOM after init (e.g. HumHub stream items, widgets).
+     */
+    var applyDisabledRules = function() {
+        if (disabledContainers.length === 0) return;
+
+        disabledContainers.forEach(function(storedSelector) {
+            applySingleRule(storedSelector);
+        });
+
+        if (typeof MutationObserver !== 'undefined') {
+            var observer = new MutationObserver(function(mutations) {
+                mutations.forEach(function(mutation) {
+                    if (mutation.addedNodes.length) {
+                        disabledContainers.forEach(function(storedSelector) {
+                            applySingleRule(storedSelector);
+                        });
+                    }
+                });
+            });
+
+            observer.observe(document.body, { childList: true, subtree: true });
+        }
+    };
+
+    /**
+     * Apply a single stored selector rule to the DOM.
+     */
+    var applySingleRule = function(storedSelector) {
+        var jqSelector = resolveSelector(storedSelector);
+
+        try {
+            var $matched = $(jqSelector).not('.surface-disabled');
+            if ($matched.length) {
+                $matched.addClass('surface-disabled');
+                console.log('Surface: disabled ' + $matched.length + ' element(s) → "' + jqSelector + '"');
+            }
+        } catch (e) {
+            console.error('Surface: invalid selector "' + jqSelector + '"', e);
+        }
+    };
+
     var openRuleModal = function(selector, name) {
-        // First check if there are existing rules for this container
         $.ajax({
-            url: '/surface/admin/get-rule-data',
+            url:  '/surface/admin/get-rule-data',
             type: 'GET',
             data: { selector: selector },
             success: function(response) {
-                // Load the modal with existing rule data if available
                 modal.global.load('/surface/admin/rule-modal', {
                     data: {
-                        selector: selector,
-                        name: name,
+                        selector:      selector,
+                        name:          name,
                         existingRules: JSON.stringify(response.rules || [])
                     }
                 });
             },
             error: function() {
-                // Load modal anyway even if check fails
                 modal.global.load('/surface/admin/rule-modal', {
-                    data: {
-                        selector: selector,
-                        name: name
-                    }
+                    data: { selector: selector, name: name }
                 });
             }
         });
     };
-    
-    /**
-     * Apply disabled rules by hiding containers
-     */
-    var applyDisabledRules = function() {
-        if (disabledContainers.length === 0) {
-            return;
-        }
-        
-        disabledContainers.forEach(function(selector) {
-            $('[data-surface-container="' + selector + '"]').addClass('surface-disabled');
-        });
-    };
-    
-    /**
-     * Handle form submission via AJAX
-     */
+
     var initFormHandler = function() {
-        // Toggle user select visibility based on checkbox
         $(document).on('change', '#surfaceruleform-disabled_for_all', function() {
-            var $checkbox = $(this);
+            var $checkbox   = $(this);
             var $userSelect = $('#user-select-container');
-            
+
             if ($checkbox.is(':checked')) {
                 $userSelect.addClass('d-none');
                 $('#surfaceruleform-user_id').val('');
@@ -352,32 +396,27 @@ humhub.module('surface', function(module, require, $) {
             }
         });
 
-        // Handle modal form submission
         $(document).on('submit', '#surface-rule-form', function(e) {
             e.preventDefault();
-            
-            var $form = $(this);
+
+            var $form    = $(this);
             var formData = $form.serialize();
-            
+
             $.ajax({
-                url: $form.attr('action'),
-                type: 'POST',
-                data: formData,
+                url:      $form.attr('action'),
+                type:     'POST',
+                data:     formData,
                 dataType: 'json',
                 success: function(response) {
-                    // Check if it's a success response
                     if (response.success) {
                         modal.global.close();
                         refreshRules();
                     } else {
-                        // If it's not JSON success, it means validation errors
-                        // The response should contain HTML
                         $('#globalModal .modal-content').html(response);
-                        initFormHandler(); // Reinitialize handlers
+                        initFormHandler();
                     }
                 },
                 error: function(xhr) {
-                    // If response is HTML (validation errors), replace modal content
                     if (xhr.responseText && xhr.responseText.indexOf('modal-dialog') !== -1) {
                         $('#globalModal').html(xhr.responseText);
                         initFormHandler();
@@ -386,89 +425,67 @@ humhub.module('surface', function(module, require, $) {
                     }
                 }
             });
-            
+
             return false;
         });
 
-        // Initialize checkbox state on modal open
         var $checkbox = $('#surfaceruleform-disabled_for_all');
         if ($checkbox.length && $checkbox.is(':checked')) {
             $('#user-select-container').addClass('d-none');
         }
 
-        // Load existing rules and display them
         displayExistingRules();
     };
-    
-    /**
-     * Refresh rules after save
-     */
+
     var refreshRules = function() {
-        // Reload the page to apply new rules
-        // In a production environment, you might want to use AJAX to update rules dynamically
         window.location.reload();
     };
-    
-    /**
-     * Display existing rules in the modal
-     */
+
     var displayExistingRules = function() {
-        var $existingRulesContainer = $('#existing-rules-container');
-        
-        if (!$existingRulesContainer.length) {
-            return;
-        }
-        
-        var existingRulesData = $existingRulesContainer.data('rules');
-        
-        if (!existingRulesData || existingRulesData.length === 0) {
-            $existingRulesContainer.html(
+        var $container = $('#existing-rules-container');
+        if (!$container.length) return;
+
+        var rules = $container.data('rules');
+
+        if (!rules || rules.length === 0) {
+            $container.html(
                 '<p class="text-muted"><i class="fa fa-info-circle"></i> No existing rules for this container.</p>'
             );
             return;
         }
-        
+
         var html = '<div class="existing-rules-list"><h5>Existing Rules:</h5><ul class="list-group">';
-        
-        existingRulesData.forEach(function(rule) {
-            var scope = rule.disabled_for_all 
-                ? '<span class="badge bg-danger">All Users</span>' 
-                : '<span class="badge bg-info">User: ' + rule.username + '</span>';
-            
-            var deleteBtn = '<button type="button" class="btn btn-sm btn-danger delete-rule-btn" data-rule-id="' + rule.id + '">' +
-                '<i class="fa fa-trash"></i></button>';
-            
+
+        rules.forEach(function(rule) {
+            var scope = rule.disabled_for_all
+                ? '<span class="badge bg-danger">All Users</span>'
+                : '<span class="badge bg-info">User: ' + (rule.username || rule.user_id) + '</span>';
+
+            var del = '<button type="button" class="btn btn-sm btn-danger delete-rule-btn" data-rule-id="' + rule.id + '">' +
+                      '<i class="fa fa-trash"></i></button>';
+
             html += '<li class="list-group-item d-flex justify-content-between align-items-center">' +
-                scope + deleteBtn + '</li>';
+                    scope + del + '</li>';
         });
-        
+
         html += '</ul></div>';
-        
-        $existingRulesContainer.html(html);
-        
-        // Handle delete button clicks
+        $container.html(html);
+
         $(document).on('click', '.delete-rule-btn', function() {
-            var ruleId = $(this).data('rule-id');
-            deleteRule(ruleId);
+            deleteRule($(this).data('rule-id'));
         });
     };
-    
-    /**
-     * Delete a rule via AJAX
-     */
+
     var deleteRule = function(ruleId) {
-        if (!confirm('Are you sure you want to delete this rule?')) {
-            return;
-        }
-        
+        if (!confirm('Are you sure you want to delete this rule?')) return;
+
         $.ajax({
-            url: '/surface/admin/delete',
+            url:  '/surface/admin/delete',
             type: 'POST',
             data: { id: ruleId },
             success: function() {
-                // Reload the modal to show updated rules
                 var selector = $('#surfaceruleform-container_selector').val();
-                var name = $('#surfaceruleform-container_name').val();
+                var name     = $('#surfaceruleform-container_name').val();
                 openRuleModal(selector, name);
             },
             error: function() {
@@ -476,21 +493,32 @@ humhub.module('surface', function(module, require, $) {
             }
         });
     };
-    
-    // Export public methods
-    module.export({
-        init: init,
-        setDisabledContainers: setDisabledContainers,
-        setAdminStatus: setAdminStatus,
-        openRuleModal: openRuleModal,
-        refreshRules: refreshRules,
-        initFormHandler: initFormHandler,
-        displayExistingRules: displayExistingRules,
-        deleteRule: deleteRule,
-        generateUniqueSelector: generateUniqueSelector,
-        getElementName: getElementName,
-        showSurfaceTooltip: showSurfaceTooltip,
-        hideSurfaceTooltip: hideSurfaceTooltip
-    });
 
+    var shouldSkipElement = function($el) { return isHardExcluded($el); };
+
+    var addFlagToElement = function($el) {
+        console.log('Surface: addFlagToElement is deprecated — use double-click', $el);
+    };
+
+    module.export({
+        init:                   init,
+        setDisabledContainers:  setDisabledContainers,
+        setAdminStatus:         setAdminStatus,
+        openRuleModal:          openRuleModal,
+        refreshRules:           refreshRules,
+        initFormHandler:        initFormHandler,
+        displayExistingRules:   displayExistingRules,
+        deleteRule:             deleteRule,
+        generateUniqueSelector: generateUniqueSelector,
+        getElementName:         getElementName,
+        showSurfaceTooltip:     showSurfaceTooltip,
+        hideSurfaceTooltip:     hideSurfaceTooltip,
+        resolveSelector:        resolveSelector,
+        applyDisabledRules:     applyDisabledRules,
+        applySingleRule:        applySingleRule,
+        getBestTarget:          getBestTarget,
+        isHardExcluded:         isHardExcluded,
+        buildScopedPath:        buildScopedPath,
+        getNodeSegment:         getNodeSegment
+    });
 });

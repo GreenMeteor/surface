@@ -5,6 +5,8 @@ namespace humhub\modules\surface\controllers;
 use humhub\modules\admin\components\Controller;
 use humhub\modules\surface\models\SurfaceRule;
 use humhub\modules\surface\models\forms\SurfaceRuleForm;
+use humhub\modules\admin\permissions\ManageModules;
+use yii\web\ForbiddenHttpException;
 use humhub\modules\user\models\User;
 use Yii;
 use yii\web\Response;
@@ -15,9 +17,33 @@ class AdminController extends Controller
     {
         $rules = SurfaceRule::find()->orderBy(['created_at' => SORT_DESC])->all();
 
+        /** @var \humhub\modules\surface\Module $module */
+        $module = Yii::$app->getModule('surface');
+        $adminModeEnabled = $module->isAdminModeEnabled();
+
         return $this->render('index', [
             'rules' => $rules,
+            'adminModeEnabled' => $adminModeEnabled,
         ]);
+    }
+
+    public function actionToggleAdminMode()
+    {
+        if (!Yii::$app->user->can(\humhub\modules\admin\permissions\ManageModules::class)) {
+            throw new \yii\web\ForbiddenHttpException();
+        }
+
+        /** @var \humhub\modules\surface\Module $module */
+        $module = Yii::$app->getModule('surface');
+        $module->toggleAdminMode();
+
+        $this->view->success(
+            $module->isAdminModeEnabled()
+                ? Yii::t('SurfaceModule.base', 'Admin mode enabled')
+                : Yii::t('SurfaceModule.base', 'Admin mode disabled')
+        );
+
+        return $this->redirect(['index']);
     }
 
     public function actionRuleModal($selector = null, $name = null)
@@ -103,6 +129,7 @@ class AdminController extends Controller
     {
         $rule = $this->findModel($id);
         $rule->delete();
+
         $this->view->success(Yii::t('SurfaceModule.base', 'Rule deleted successfully'));
 
         return $this->redirect(['index']);
